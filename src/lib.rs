@@ -97,6 +97,27 @@ where
             .map(|(next_input, result)| (next_input, map_fn(result)))
 }
 
+fn one_or_more<'a, P, A>(parser: P) -> impl Parser<'a, Vec<A>>
+where
+    P: Parser<'a, A>,
+{
+    move |mut input: &'a str| {
+        let mut result = Vec::new();
+        match parser.parse(input) {
+            Ok((input1, r1)) => {
+                input = input1;
+                result.push(r1);
+            },
+            Err(err) => return Err(err),
+        }
+        while let Ok((input1, r1)) = parser.parse(input) {
+            input = input1;
+            result.push(r1);
+        }
+        Ok((input, result))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
