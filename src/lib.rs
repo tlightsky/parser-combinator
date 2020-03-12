@@ -31,17 +31,14 @@ fn the_letter_a(input: &str) -> Result<(&str, ()), &str> {
     }
 }
 
-fn match_literal(expected: &'static str)
-    -> impl Fn(&str) -> Result<(&str, ()), &str> {
-    move |input| match input.get(0..expected.len()) {
-        Some(next) if next == expected => {
-            Ok((&input[expected.len()..], ()))
-        },
+fn match_literal<'a>(expected: &'static str) -> impl Parser<'a, ()> {
+    move |input: &'a str| match input.get(0..expected.len()) {
+        Some(next) if next == expected => Ok((&input[expected.len()..], ())),
         _ => Err(input),
     }
 }
 
-fn identifier(input: &str) -> Result<(&str, String), &str> {
+fn identifier(input: &str) -> ParseResult<String>{
     let mut matched = String::new();
     let mut chars = input.chars();
     match chars.next() {
@@ -60,38 +57,40 @@ fn identifier(input: &str) -> Result<(&str, String), &str> {
     Ok((&input[matched.len()..], matched))
 }
 
-//fn pair<'a, P1, P2, R1, R2>(parser1: P1, parser2: P2)
-//    -> impl Parser<'a, (R1, R2)>
-//    where
-//        P1: Parser<'a, R1>,
-//        P2: Parser<'a, R2>,
-//{
-//    move |input|
-//        parser1.parse(input).and_then(|(input1, result1)| {
-//            parser2.parse(input1)
-//                .map(|(input2, result2)| (input2, (result1, result2))
-//            )
-//        })
-//}
+fn pair<'a, P1, P2, R1, R2>(parser1: P1, parser2: P2)
+   -> impl Parser<'a, (R1, R2)>
+   where
+       P1: Parser<'a, R1>,
+       P2: Parser<'a, R2>,
+{
+   move |input|
+       parser1.parse(input).and_then(|(input1, result1)| {
+           parser2.parse(input1)
+               .map(|(input2, result2)| (input2, (result1, result2))
+           )
+       })
+}
 
-fn pair<'a, P1, P2, R1, R2>(parser1: P1, parser2: P2) -> impl Parser<'a, (R1, R2)>
+fn left<'a, P1, P2, R1, R2>(parser1: P1, parser2: P2) -> impl Parser<'a, R1>
+where
+    P1: Parser<'a, R1>,
+    P2: Parser<'a, R2>,
+{
+    map(pair(parser1, parser2), |(left, _)| left)
+}
+
+fn right<'a, P1, P2, R1, R2>(parser1: P1, parser2: P2) -> impl Parser<'a, R2>
     where
         P1: Parser<'a, R1>,
         P2: Parser<'a, R2>,
 {
-    move |input| {
-        parser1.parse(input).and_then(|(next_input, result1)| {
-            parser2.parse(next_input)
-                .map(|(last_input, result2)| (last_input, (result1, result2)))
-        })
-    }
+    map(pair(parser1, parser2), |(_, right)| right)
 }
 
-fn map<'a, P, F, A, B>(parser: P, map_fn: F)
-    -> impl Parser<'a, B>
-    where
-        P: Parser<'a, A>,
-        F: Fn(A) -> B,
+fn map<'a, P, F, A, B>(parser: P, map_fn: F) -> impl Parser<'a, B>
+where
+    P: Parser<'a, A>,
+    F: Fn(A) -> B,
 {
     move |input|
         parser.parse(input)
@@ -106,15 +105,15 @@ mod tests {
     fn literal_parser() {
         let parse_joe = match_literal("Hello Joe!");
         assert_eq!(
-            parse_joe("Hello Joe!"),
+            parse_joe.parse("Hello Joe!"),
             Ok(("", ())),
         );
         assert_eq!(
-            parse_joe("Hello Joe!Hello Robert!"),
+            parse_joe.parse("Hello Joe!Hello Robert!"),
             Ok(("Hello Robert!", ())),
         );
         assert_eq!(
-            parse_joe("Hello Mike!"),
+            parse_joe.parse("Hello Mike!"),
             Err("Hello Mike!"),
         );
     }
@@ -148,5 +147,15 @@ mod tests {
         );
         assert_eq!(tag_opener.parse("oops"), Err("oops"));
         assert_eq!(tag_opener.parse("<!oops"), Err("!oops"));
+    }
+    #[test]
+    fn right_combinator() {
+        let tag_opener = right(match_literal("<"), identifier);
+        assert_eq!(
+            Ok(("/>", "my-first-element".to_string())),
+            tag_opener.parse("<my-first-element/>"),
+        );
+        assert_eq!(Err("oops"), tag_opener.parse("oops"));
+        assert_eq!(Err("!oops"), tag_opener.parse("<!oops"));
     }
 }
