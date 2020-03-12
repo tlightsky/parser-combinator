@@ -9,6 +9,21 @@ struct Element {
     children: Vec<Element>,
 }
 
+type ParseResult<'a, Output> = Result<(&'a str, Output), &'a str>;
+
+trait Parser<'a, Output> {
+    fn parse(&self, input: &'a str) -> ParseResult<'a, Output>;
+}
+
+impl<'a, F, Output> Parser<'a, Output> for F
+where
+    F: Fn(&'a str) -> ParseResult<Output>,
+{
+    fn parse(&self, input: &'a str) -> ParseResult<'a, Output> {
+        self(input)
+    }
+}
+
 fn the_letter_a(input: &str) -> Result<(&str, ()), &str> {
     match input.chars().next() {
         Some('a') => Ok((&input['a'.len_utf8()..], ())),
@@ -45,24 +60,47 @@ fn identifier(input: &str) -> Result<(&str, String), &str> {
     Ok((&input[matched.len()..], matched))
 }
 
-fn pair<P1, P2, R1, R2>(parser1: P1, parser2: P2)
-    -> impl Fn(&str) -> Result<(&str, (R1, R2)), &str>
+//fn pair<'a, P1, P2, R1, R2>(parser1: P1, parser2: P2)
+//    -> impl Parser<'a, (R1, R2)>
+//    where
+//        P1: Parser<'a, R1>,
+//        P2: Parser<'a, R2>,
+//{
+//    move |input|
+//        parser1.parse(input).and_then(|(input1, result1)| {
+//            parser2.parse(input1)
+//                .map(|(input2, result2)| (input2, (result1, result2))
+//            )
+//        })
+//}
+
+fn pair<'a, P1, P2, R1, R2>(parser1: P1, parser2: P2) -> impl Parser<'a, (R1, R2)>
     where
-        P1: Fn(&str) -> Result<(&str, R1), &str>,
-        P2: Fn(&str) -> Result<((&str, R2)), &str>,
+        P1: Parser<'a, R1>,
+        P2: Parser<'a, R2>,
 {
-    move |input| match parser1(input) {
-        Ok((input1, R1)) => match parser2(input1) {
-            Ok((input2, R2)) => Ok((input2, (R1, R2))),
-            Err(err) => Err(err),
-        },
-        Err(err) => Err(input),
+    move |input| {
+        parser1.parse(input).and_then(|(next_input, result1)| {
+            parser2.parse(next_input)
+                .map(|(last_input, result2)| (last_input, (result1, result2)))
+        })
     }
+}
+
+fn map<'a, P, F, A, B>(parser: P, map_fn: F)
+    -> impl Parser<'a, B>
+    where
+        P: Parser<'a, A>,
+        F: Fn(A) -> B,
+{
+    move |input|
+        parser.parse(input)
+            .map(|(next_input, result)| (next_input, map_fn(result)))
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{match_literal, identifier, pair};
+    use super::*;
 
     #[test]
     fn literal_parser() {
@@ -105,10 +143,10 @@ mod tests {
     fn pair_combinator() {
         let tag_opener = pair(match_literal("<"), identifier);
         assert_eq!(
-            tag_opener("<my-first-element/>"),
+            tag_opener.parse("<my-first-element/>"),
             Ok(("/>", ((), "my-first-element".to_string()))),
         );
-        assert_eq!(tag_opener("oops"), Err("oops"));
-        assert_eq!(tag_opener("<!oops"), Err("!oops"));
+        assert_eq!(tag_opener.parse("oops"), Err("oops"));
+        assert_eq!(tag_opener.parse("<!oops"), Err("!oops"));
     }
 }
