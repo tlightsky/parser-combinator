@@ -101,7 +101,7 @@ fn one_or_more<'a, P, A>(parser: P) -> impl Parser<'a, Vec<A>>
 where
     P: Parser<'a, A>,
 {
-    move |mut input: &'a str| {
+    move |mut input| {
         let mut result = Vec::new();
         match parser.parse(input) {
             Ok((input1, r1)) => {
@@ -110,6 +110,20 @@ where
             },
             Err(err) => return Err(err),
         }
+        while let Ok((input1, r1)) = parser.parse(input) {
+            input = input1;
+            result.push(r1);
+        }
+        Ok((input, result))
+    }
+}
+
+fn zero_or_more<'a, P, A>(parser: P) -> impl Parser<'a, Vec<A>>
+where
+    P: Parser<'a, A>
+{
+    move |mut input| {
+        let mut result = Vec::new();
         while let Ok((input1, r1)) = parser.parse(input) {
             input = input1;
             result.push(r1);
@@ -178,5 +192,19 @@ mod tests {
         );
         assert_eq!(Err("oops"), tag_opener.parse("oops"));
         assert_eq!(Err("!oops"), tag_opener.parse("<!oops"));
+    }
+    #[test]
+    fn one_or_more_combinator() {
+        let parser = one_or_more(match_literal("ha"));
+        assert_eq!(parser.parse("hahaha"), Ok(("", vec![(), (), ()])));
+        assert_eq!(parser.parse("ahah"), Err("ahah"));
+        assert_eq!(parser.parse(""), Err(""));
+    }
+    #[test]
+    fn zero_or_more_combinator() {
+        let parser = zero_or_more(match_literal("ha"));
+        assert_eq!(parser.parse("hahaha"), Ok(("", vec![(), (), ()])));
+        assert_eq!(parser.parse("ahah"), Ok(("ahah", vec![])));
+        assert_eq!(parser.parse(""), Ok(("", vec![])));
     }
 }
