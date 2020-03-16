@@ -2,6 +2,9 @@
 // Parsing is a process of deriving structure from a stream of data.
 // A parser is something which teases out that structure.
 
+use std::rc::Rc;
+use std::borrow::{BorrowMut, Borrow};
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Element {
     name: String,
@@ -97,25 +100,16 @@ where
             .map(|(next_input, result)| (next_input, map_fn(result)))
 }
 
-fn one_or_more<'a, P, A>(parser: P) -> impl Parser<'a, Vec<A>>
+fn one_or_more<'a, P, A>(parser: Rc<P>) -> impl Parser<'a, Vec<A>>
 where
     P: Parser<'a, A>,
 {
-    move |mut input| {
-        let mut result = Vec::new();
-        match parser.parse(input) {
-            Ok((input1, r1)) => {
-                input = input1;
-                result.push(r1);
-            },
-            Err(err) => return Err(err),
-        }
-        while let Ok((input1, r1)) = parser.parse(input) {
-            input = input1;
-            result.push(r1);
-        }
-        Ok((input, result))
-    }
+    map(pair(parser.borrow(),
+                zero_or_more(parser.borrow())),
+        |(head, mut tail)| {
+        tail.insert(0, head);
+        tail
+    })
 }
 
 fn zero_or_more<'a, P, A>(parser: P) -> impl Parser<'a, Vec<A>>
@@ -195,7 +189,7 @@ mod tests {
     }
     #[test]
     fn one_or_more_combinator() {
-        let parser = one_or_more(match_literal("ha"));
+        let parser = one_or_more(Rc::new(match_literal("ha")));
         assert_eq!(parser.parse("hahaha"), Ok(("", vec![(), (), ()])));
         assert_eq!(parser.parse("ahah"), Err("ahah"));
         assert_eq!(parser.parse(""), Err(""));
