@@ -33,6 +33,17 @@ trait Parser<'a, Output> {
     {
         BoxedParser::new(pred(self, predicator))
     }
+
+    fn and_then<NewOutput, F, NextP>(self, f: F) -> BoxedParser<'a, NewOutput>
+    where
+        Self: Sized + 'a,
+        Output: 'a,
+        NewOutput: 'a,
+        NextP: Parser<'a, NewOutput> + 'a,
+        F: Fn(Output) -> NextP+'a,
+    {
+        BoxedParser::new(and_then(self, f))
+    }
 }
 
 impl<'a, F, Output> Parser<'a, Output> for F
@@ -77,32 +88,32 @@ fn identifier(input: &str) -> ParseResult<String>{
     Ok((&input[matched.len()..], matched))
 }
 
-fn pair<'a, P1, P2, R1, R2>(parser1: P1, parser2: P2)
-   -> impl Parser<'a, (R1, R2)>
-   where
-       P1: Parser<'a, R1>,
-       P2: Parser<'a, R2>,
+fn pair<'a, P1, P2, R1, R2>(parser1: P1, parser2: P2) -> impl Parser<'a, (R1, R2)>
+where
+    P1: Parser<'a, R1> + 'a,
+    P2: Parser<'a, R2> + 'a,
+    R1: 'a + Clone,
+    R2: 'a,
 {
-   move |input|
-       parser1.parse(input).and_then(|(input1, result1)| {
-           parser2.parse(input1)
-               .map(|(input2, result2)| (input2, (result1, result2))
-           )
-       })
+    parser1.and_then(move |result1| (&parser2).map(move |result2| (result1.clone(), result2)))
 }
 
 fn left<'a, P1, P2, R1, R2>(parser1: P1, parser2: P2) -> impl Parser<'a, R1>
 where
-    P1: Parser<'a, R1>,
-    P2: Parser<'a, R2>,
+    P1: Parser<'a, R1> + 'a,
+    P2: Parser<'a, R2> + 'a,
+    R1: 'a + Clone,
+    R2: 'a,
 {
     map(pair(parser1, parser2), |(left, _)| left)
 }
 
 fn right<'a, P1, P2, R1, R2>(parser1: P1, parser2: P2) -> impl Parser<'a, R2>
     where
-        P1: Parser<'a, R1>,
-        P2: Parser<'a, R2>,
+        P1: Parser<'a, R1> + 'a,
+        P2: Parser<'a, R2> + 'a,
+        R1: Clone + 'a,
+        R2: 'a,
 {
     map(pair(parser1, parser2), |(_, right)| right)
 }
@@ -230,6 +241,61 @@ fn single_element<'a>() -> impl Parser<'a, Element> {
         )
 }
 
+fn open_element<'a>() -> impl Parser<'a, Element> {
+    left(element_start(), match_literal(">")).map(
+        |(name, attributes)| Element {
+            name,
+            attributes,
+            children: vec![]
+        }
+    )
+}
+
+fn either<'a, P1, P2, A>(parser1: P1, parser2: P2) -> impl Parser<'a, A>
+where
+    P1: Parser<'a, A>,
+    P2: Parser<'a, A>,
+{
+    move |input| match parser1.parse(input) {
+        ok @ Ok(_) => ok,
+        // Ok((next, result)) => Ok((next, result)),
+        Err(_) => parser2.parse(input),
+    }
+}
+
+fn element<'a>() -> impl Parser<'a, Element> {
+    either(single_element(), open_element())
+}
+
+fn close_element<'a>(expedted_name: String) -> impl Parser<'a, String>{
+    right(
+        match_literal("</"),
+        left(
+            identifier,
+            match_literal(">"),
+        ),
+    ).pred(move |name| name ==&expedted_name)
+}
+
+// fn parent_element<'a>() -> impl Parser<'a, Element> {
+//     pair(
+//         open_element(),
+//         left(zero_or_more(element()), close_element())
+//     )
+// }
+
+fn and_then<'a, P, F, A, B, NextP>(parser: P, f: F) -> impl Parser<'a, B>
+where
+    P: Parser<'a, A>,
+    NextP: Parser<'a, B>,
+    F: Fn(A) -> NextP,
+{
+    move |input| match parser.parse(input) {
+        Ok((next_input, result)) => f(result).parse(next_input),
+        Err(err) => Err(err),
+    }
+}
+
 struct BoxedParser<'a, Output> {
     parser: Box<dyn Parser<'a, Output> + 'a>
 }
@@ -250,6 +316,8 @@ impl<'a, Output> Parser<'a, Output> for BoxedParser<'a, Output> {
         self.parser.parse(input)
     }
 }
+
+
 
 #[cfg(test)]
 mod tests {
