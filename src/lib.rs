@@ -95,7 +95,7 @@ where
     R1: 'a + Clone,
     R2: 'a,
 {
-    parser1.and_then(move |result1| (&parser2).map(move |result2| (result1.clone(), result2)))
+    parser1.and_then(move |result1| parser2.map(move |result2| (result1.clone(), result2)))
 }
 
 fn left<'a, P1, P2, R1, R2>(parser1: P1, parser2: P2) -> impl Parser<'a, R1>
