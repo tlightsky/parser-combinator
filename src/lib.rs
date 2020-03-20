@@ -95,9 +95,15 @@ where
     R1: 'a + Clone,
     R2: 'a,
 {
-    parser1.and_then(move |result1| {
-        parser2.map(move |result2| (result1.clone(), result2))
-    })
+    // parser1.and_then(move |result1| {
+    //     parser2.map(move |result2| (result1.clone(), result2))
+    // })
+    move |input| {
+        parser1.parse(input).and_then(|(next_input, result1)| {
+            parser2.parse(next_input)
+                .map(|(last_input, result2)| (last_input, (result1, result2)))
+        })
+    }
 }
 
 fn left<'a, P1, P2, R1, R2>(parser1: P1, parser2: P2) -> impl Parser<'a, R1>
@@ -207,9 +213,9 @@ fn space1<'a>() -> impl Parser<'a, Vec<char>> {
     one_or_more(whitespace_char())
 }
 
-// fn space0<'a>() -> impl Parser<'a, Vec<char>> {
-//     zero_or_more(whitespace_char())
-// }
+fn space0<'a>() -> impl Parser<'a, Vec<char>> {
+    zero_or_more(whitespace_char())
+}
 
 fn quoted_string<'a>() -> impl Parser<'a, String> {
     right(
@@ -266,7 +272,7 @@ where
 }
 
 fn element<'a>() -> impl Parser<'a, Element> {
-    either(single_element(), open_element())
+    whitespace_wrap(either(single_element(), parent_element()))
 }
 
 fn close_element<'a>(expedted_name: String) -> impl Parser<'a, String>{
@@ -279,12 +285,17 @@ fn close_element<'a>(expedted_name: String) -> impl Parser<'a, String>{
     ).pred(move |name| name ==&expedted_name)
 }
 
-// fn parent_element<'a>() -> impl Parser<'a, Element> {
-//     pair(
-//         open_element(),
-//         left(zero_or_more(element()), close_element())
-//     )
-// }
+fn parent_element<'a>() -> impl Parser<'a, Element> {
+    open_element().and_then(|el|
+        left(zero_or_more(element()), close_element(el.name.clone())).map(
+            move |children| {
+                let mut el = el.clone();
+                el.children = children;
+                el
+            }
+        )
+    )
+}
 
 fn and_then<'a, P, F, A, B, NextP>(parser: P, f: F) -> impl Parser<'a, B>
 where
@@ -319,7 +330,13 @@ impl<'a, Output> Parser<'a, Output> for BoxedParser<'a, Output> {
     }
 }
 
-
+fn whitespace_wrap<'a, P, A>(parser: P) -> impl Parser<'a, A>
+where
+    A: Clone + 'a,
+    P: Parser<'a, A> + 'a,
+{
+    right(space0(), left(parser, space0()))
+}
 
 #[cfg(test)]
 mod tests {
@@ -441,5 +458,37 @@ mod tests {
                 }
             )),
         );
+    }
+
+    #[test]
+    fn xml_parser() {
+        let doc = r#"
+            <top label="Top">
+                <semi-bottom label="Bottom"/>
+                <middle>
+                    <bottom label="Another bottom"/>
+                </middle>
+            </top>"#;
+        let parsed_doc = Element {
+            name: "top".to_string(),
+            attributes: vec![("label".to_string(), "Top".to_string())],
+            children: vec![
+                Element {
+                    name: "semi-bottom".to_string(),
+                    attributes: vec![("label".to_string(), "Bottom".to_string())],
+                    children: vec![],
+                },
+                Element {
+                    name: "middle".to_string(),
+                    attributes: vec![],
+                    children: vec![Element {
+                        name: "bottom".to_string(),
+                        attributes: vec![("label".to_string(), "Another bottom".to_string())],
+                        children: vec![],
+                    }],
+                },
+            ],
+        };
+        assert_eq!(element().parse(doc), Ok(("", parsed_doc)));
     }
 }
